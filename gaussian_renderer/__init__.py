@@ -46,7 +46,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
-        antialiasing=pipe.antialiasing
+        antialiasing=pipe.antialiasing,
+        profile_mask=getattr(pipe, 'profile_mask', 0)
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -86,9 +87,12 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     else:
         colors_precomp = override_color
 
-    # Rasterize visible Gaussians to image, obtain their radii (on screen). 
+    # Rasterize visible Gaussians to image, obtain their radii (on screen).
+    # The underlying rasterizer can optionally return two profiling
+    # tensors (tests_per_pixel, contribs_per_pixel) when debug is
+    # enabled. Handle both return shapes here.
     if separate_sh:
-        rendered_image, radii, depth_image = rasterizer(
+        res = rasterizer(
             means3D = means3D,
             means2D = means2D,
             dc = dc,
@@ -99,7 +103,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
     else:
-        rendered_image, radii, depth_image = rasterizer(
+        res = rasterizer(
             means3D = means3D,
             means2D = means2D,
             shs = shs,
@@ -108,6 +112,21 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             scales = scales,
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
+
+    # Unpack flexible return (3 or 5 elements)
+    tests_tensor = None
+    contribs_tensor = None
+    if isinstance(res, (tuple, list)):
+        if len(res) == 3:
+            rendered_image, radii, depth_image = res
+        elif len(res) == 5:
+            rendered_image, radii, depth_image, tests_tensor, contribs_tensor = res
+        else:
+            # Unexpected shape: try to unpack first three
+            rendered_image, radii, depth_image = res[0], res[1], res[2]
+    else:
+        # Single return? unexpected, but attempt to unpack
+        rendered_image, radii, depth_image = res
         
     # Apply exposure to rendered image (training only)
     if use_trained_exp:
@@ -124,5 +143,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         "radii": radii,
         "depth" : depth_image
         }
+    if tests_tensor is not None:
+        out["profile_tests"] = tests_tensor
+    if contribs_tensor is not None:
+        out["profile_contribs"] = contribs_tensor
     
     return out

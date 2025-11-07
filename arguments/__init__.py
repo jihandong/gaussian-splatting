@@ -68,6 +68,10 @@ class PipelineParams(ParamGroup):
         self.convert_SHs_python = False
         self.compute_cov3D_python = False
         self.debug = False
+        # HJ-Profiling: Bitmask for miscellaneous runtime flags. Use individual bits
+        # to enable/disable diagnostics/features. Bit 0 (1<<0) is used
+        # to enable per-pixel Gaussian profiling.
+        self.profile_mask = 0
         self.antialiasing = False
         super().__init__(parser, "Pipeline Parameters")
 
