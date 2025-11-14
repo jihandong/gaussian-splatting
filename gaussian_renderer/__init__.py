@@ -113,16 +113,21 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
 
-    # Unpack flexible return (3 or 5 elements)
+    # Unpack flexible return (3, 5, or 7 elements depending on profiling bits)
     tests_tensor = None
     contribs_tensor = None
+    loop_cycles_tensor = None
+    discrim_cycles_tensor = None
     if isinstance(res, (tuple, list)):
         if len(res) == 3:
             rendered_image, radii, depth_image = res
         elif len(res) == 5:
+            # counts only
             rendered_image, radii, depth_image, tests_tensor, contribs_tensor = res
+        elif len(res) == 7:
+            # counts + timing
+            rendered_image, radii, depth_image, tests_tensor, contribs_tensor, loop_cycles_tensor, discrim_cycles_tensor = res
         else:
-            # Unexpected shape: try to unpack first three
             rendered_image, radii, depth_image = res[0], res[1], res[2]
     else:
         # Single return? unexpected, but attempt to unpack
@@ -135,6 +140,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
+    # Defensive: ensure channel dimension present
+    if rendered_image.dim() == 2:
+        rendered_image = rendered_image.unsqueeze(0)
     rendered_image = rendered_image.clamp(0, 1)
     out = {
         "render": rendered_image,
@@ -147,5 +155,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         out["profile_tests"] = tests_tensor
     if contribs_tensor is not None:
         out["profile_contribs"] = contribs_tensor
+    if loop_cycles_tensor is not None:
+        out["profile_loop_cycles"] = loop_cycles_tensor
+    if discrim_cycles_tensor is not None:
+        out["profile_discrim_cycles"] = discrim_cycles_tensor
     
     return out
