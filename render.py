@@ -87,6 +87,88 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             save_hist(tests_np, os.path.join(render_path, f"{idx:05d}_tests_hist.json"))
             save_hist(contribs_np, os.path.join(render_path, f"{idx:05d}_contribs_hist.json"))
 
+            # --- Adjusted analysis: treat profile_first_true_at as skip_count ---
+            if "profile_first_true_at" in out and "profile_post_false_after" in out:
+                skip_count_t = out["profile_first_true_at"].cpu()  # semantic: gaussians skipped after early stop
+                post_false_t = out["profile_post_false_after"].cpu()  # false after early stop
+                if train_test_exp:
+                    w = skip_count_t.shape[1]
+                    skip_count_t = skip_count_t[:, w // 2:]
+                    post_false_t = post_false_t[:, w // 2:]
+                skip_count_np = skip_count_t.numpy().astype(np.int32)
+                post_false_np = post_false_t.numpy().astype(np.int32)
+                np.save(os.path.join(render_path, f"{idx:05d}_skip_count.npy"), skip_count_np)
+                np.save(os.path.join(render_path, f"{idx:05d}_post_false.npy"), post_false_np)
+
+                # Heatmaps
+                save_heatmap(skip_count_np, os.path.join(render_path, f"{idx:05d}_skip_count.png"))
+                save_heatmap(post_false_np, os.path.join(render_path, f"{idx:05d}_post_false.png"))
+
+                # Histograms
+                save_hist(skip_count_np, os.path.join(render_path, f"{idx:05d}_skip_count_hist.json"))
+                save_hist(post_false_np, os.path.join(render_path, f"{idx:05d}_post_false_hist.json"))
+
+                # Derived ratios
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    skip_ratio_tests = np.where(tests_np > 0, skip_count_np / tests_np, 0.0).astype(np.float32)
+                    skip_ratio_contribs = np.where(contribs_np > 0, skip_count_np / contribs_np, 0.0).astype(np.float32)
+                    post_false_ratio = np.where(skip_count_np > 0, post_false_np / skip_count_np, 0.0).astype(np.float32)
+
+                def save_ratio_heat(arr_np, out_name):
+                    if arr_np.size == 0:
+                        return
+                    vmax = max(float(np.percentile(arr_np, 99.5)), 1e-6)
+                    img = np.clip(arr_np / vmax, 0.0, 1.0).astype(np.float32)
+                    torchvision.utils.save_image(torch.from_numpy(img).unsqueeze(0), out_name)
+
+                save_ratio_heat(skip_ratio_tests, os.path.join(render_path, f"{idx:05d}_skip_ratio_tests.png"))
+                save_ratio_heat(skip_ratio_contribs, os.path.join(render_path, f"{idx:05d}_skip_ratio_contribs.png"))
+                save_ratio_heat(post_false_ratio, os.path.join(render_path, f"{idx:05d}_post_false_ratio.png"))
+
+                def save_ratio_hist(arr_np, out_name, num_bins=20):
+                    vmax = max(float(np.percentile(arr_np, 99.5)), 1e-6)
+                    edges = np.linspace(0.0, vmax, num_bins + 1, dtype=np.float32)
+                    hist, _ = np.histogram(arr_np, bins=edges)
+                    payload = {
+                        "num_pixels": int(arr_np.size),
+                        "num_bins": int(num_bins),
+                        "edges": edges.tolist(),
+                        "counts": hist.astype(np.int64).tolist(),
+                        "vmax": float(vmax)
+                    }
+                    with open(out_name, "w", encoding="utf-8") as f:
+                        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+                save_ratio_hist(skip_ratio_tests, os.path.join(render_path, f"{idx:05d}_skip_ratio_tests_hist.json"))
+                save_ratio_hist(skip_ratio_contribs, os.path.join(render_path, f"{idx:05d}_skip_ratio_contribs_hist.json"))
+                save_ratio_hist(post_false_ratio, os.path.join(render_path, f"{idx:05d}_post_false_ratio_hist.json"))
+
+                pct_skip = np.percentile(skip_count_np[skip_count_np >= 0], [50, 90, 95, 99]) if skip_count_np.size else [0,0,0,0]
+                pct_skip_ratio_tests = np.percentile(skip_ratio_tests, [50, 90, 95, 99]) if skip_ratio_tests.size else [0,0,0,0]
+                pct_skip_ratio_contribs = np.percentile(skip_ratio_contribs, [50, 90, 95, 99]) if skip_ratio_contribs.size else [0,0,0,0]
+                pct_post_false_ratio = np.percentile(post_false_ratio, [50, 90, 95, 99]) if post_false_ratio.size else [0,0,0,0]
+                summary = {
+                    "pixels": int(skip_count_np.size),
+                    "skip_count_min": int(skip_count_np.min()) if skip_count_np.size else 0,
+                    "skip_count_max": int(skip_count_np.max()) if skip_count_np.size else 0,
+                    "skip_count_mean": float(skip_count_np.mean()) if skip_count_np.size else 0.0,
+                    "skip_count_percentiles": {"p50": float(pct_skip[0]), "p90": float(pct_skip[1]), "p95": float(pct_skip[2]), "p99": float(pct_skip[3])},
+                    "skip_ratio_tests_mean": float(skip_ratio_tests.mean()),
+                    "skip_ratio_tests_percentiles": {"p50": float(pct_skip_ratio_tests[0]), "p90": float(pct_skip_ratio_tests[1]), "p95": float(pct_skip_ratio_tests[2]), "p99": float(pct_skip_ratio_tests[3])},
+                    "skip_ratio_contribs_mean": float(skip_ratio_contribs.mean()),
+                    "skip_ratio_contribs_percentiles": {"p50": float(pct_skip_ratio_contribs[0]), "p90": float(pct_skip_ratio_contribs[1]), "p95": float(pct_skip_ratio_contribs[2]), "p99": float(pct_skip_ratio_contribs[3])},
+                    "post_false_ratio_mean": float(post_false_ratio.mean()),
+                    "post_false_ratio_percentiles": {"p50": float(pct_post_false_ratio[0]), "p90": float(pct_post_false_ratio[1]), "p95": float(pct_post_false_ratio[2]), "p99": float(pct_post_false_ratio[3])},
+                    "skip_ratio_tests_ge_25pct": int((skip_ratio_tests >= 0.25).sum()),
+                    "skip_ratio_tests_ge_50pct": int((skip_ratio_tests >= 0.5).sum()),
+                    "skip_ratio_contribs_ge_25pct": int((skip_ratio_contribs >= 0.25).sum()),
+                    "skip_ratio_contribs_ge_50pct": int((skip_ratio_contribs >= 0.5).sum()),
+                    "post_false_ratio_ge_50pct": int((post_false_ratio >= 0.5).sum()),
+                    "post_false_ratio_ge_90pct": int((post_false_ratio >= 0.9).sum())
+                }
+                with open(os.path.join(render_path, f"{idx:05d}_skip_post_summary.json"), "w", encoding="utf-8") as f:
+                    json.dump(summary, f, ensure_ascii=False, indent=2)
+
         # Save timing profiling if present
         if "profile_loop_cycles" in out and "profile_discrim_cycles" in out:
             loop_cycles = out["profile_loop_cycles"].cpu()
