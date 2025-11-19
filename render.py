@@ -283,6 +283,7 @@ if __name__ == "__main__":
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--enable_pixel_profile", action="store_true", help="Enable per-pixel Gaussian count profiling (bit 0)")
     parser.add_argument("--enable_timing_profile", action="store_true", help="Enable per-pixel timing profiling (bit 1)")
+    parser.add_argument("--enable_color_discrimination", action="store_true", help="Enable Color Discrimination")
     args = get_combined_args(parser)
     # If user requested the convenience flag, set bit 0 in the profile_mask
     if getattr(args, 'enable_pixel_profile', False):
@@ -295,6 +296,11 @@ if __name__ == "__main__":
             args.profile_mask = int(getattr(args, 'profile_mask', 0)) | 2
         except:
             args.profile_mask = 2
+    if getattr(args, 'enable_color_discrimination', False):
+        try:
+            args.profile_mask = int(getattr(args, 'profile_mask', 0)) | 4
+        except:
+            args.profile_mask = 4
     print("Rendering " + args.model_path)
 
     # Initialize system state (RNG)
