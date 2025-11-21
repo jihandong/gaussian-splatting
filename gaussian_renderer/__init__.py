@@ -113,9 +113,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
 
-    # Unpack flexible return (3, 7, or 9 elements depending on profiling bits)
-    # 统一接口：绑定层已固定返回 9 元组
-    (rendered_image, radii, depth_image,
+    (rendered_image, final_T_tensor, radii, depth_image,
      tests_tensor, contribs_tensor, first_true_tensor, post_false_tensor,
      loop_cycles_tensor, discrim_cycles_tensor) = res
         
@@ -147,6 +145,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     out = {
         "render": rendered_image,
+        "final_T": final_T_tensor,
         "viewspace_points": screenspace_points,
         "visibility_filter" : (radii > 0).nonzero(),
         "radii": radii,
@@ -159,4 +158,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     out["profile_post_false_after"] = post_false_tensor
     out["profile_loop_cycles"] = loop_cycles_tensor
     out["profile_discrim_cycles"] = discrim_cycles_tensor
+
+    # 不在此处计算 final_T 统计，统一由 render.py 负责（与其它 profiling 一致）
     return out

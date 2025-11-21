@@ -45,20 +45,28 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
             rendering = rendering[..., rendering.shape[-1] // 2:]
             gt = gt[..., gt.shape[-1] // 2:]
 
-        # Save count profiling heatmaps if present
+        # Save count profiling heatmaps if present (同时接入 final_T 分析)
         if "profile_tests" in out and "profile_contribs" in out:
             tests = out["profile_tests"].cpu()
             contribs = out["profile_contribs"].cpu()
+            final_T = out.get("final_T", None)
+            if final_T is not None:
+                final_T = final_T.cpu()
             if train_test_exp:
                 w = tests.shape[1]
                 tests = tests[:, w // 2:]
                 contribs = contribs[:, w // 2:]
+                if final_T is not None:
+                    final_T = final_T[:, w // 2:] if final_T.dim() == 2 else final_T[..., w // 2:]
 
             tests_np = tests.numpy()
             contribs_np = contribs.numpy()
+            finalT_np = final_T.numpy() if final_T is not None else None
             # Raw arrays
             np.save(os.path.join(render_path, f"{idx:05d}_tests.npy"), tests_np)
             np.save(os.path.join(render_path, f"{idx:05d}_contribs.npy"), contribs_np)
+            if finalT_np is not None:
+                np.save(os.path.join(render_path, f"{idx:05d}_finalT.npy"), finalT_np)
 
             def save_heatmap(arr_np, out_name):
                 vmax = max(np.percentile(arr_np, 99.5), 1.0)
@@ -68,6 +76,9 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
             save_heatmap(tests_np, os.path.join(render_path, f"{idx:05d}_tests.png"))
             save_heatmap(contribs_np, os.path.join(render_path, f"{idx:05d}_contribs.png"))
+            # final_T 作为透过率，不需要空间热力图用户已声明；若仍需，可取消注释
+            # if finalT_np is not None:
+            #     save_heatmap(finalT_np, os.path.join(render_path, f"{idx:05d}_finalT.png"))
 
             # Extra analysis: count distribution histograms (uniform bins)
             # We follow the same clipping vmax as heatmap to avoid extreme outliers
@@ -86,6 +97,30 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
             save_hist(tests_np, os.path.join(render_path, f"{idx:05d}_tests_hist.json"))
             save_hist(contribs_np, os.path.join(render_path, f"{idx:05d}_contribs_hist.json"))
+            if finalT_np is not None:
+                # final_T 分桶 (固定 10 bins 0-1)
+                edges_T = np.linspace(0.0, 1.0, 11, dtype=np.float32)
+                hist_T, _ = np.histogram(np.clip(finalT_np, 0.0, 1.0), bins=edges_T)
+                sat_mask = finalT_np < 0.0001
+                summary_T = {
+                    "num_pixels": int(finalT_np.size),
+                    "mean": float(finalT_np.mean()),
+                    "min": float(finalT_np.min()),
+                    "max": float(finalT_np.max()),
+                    "saturated_count": int(sat_mask.sum()),
+                    "saturated_ratio": float(sat_mask.mean()),
+                    "hist_edges": edges_T.tolist(),
+                    "hist_counts": hist_T.astype(np.int64).tolist(),
+                    "p50": float(np.percentile(finalT_np, 50)),
+                    "p90": float(np.percentile(finalT_np, 90)),
+                    "p95": float(np.percentile(finalT_np, 95)),
+                    "p99": float(np.percentile(finalT_np, 99))
+                }
+                # 来自渲染层的快速统计（如果有）合并
+                if "final_T_stats" in out:
+                    summary_T["renderer_stats"] = out["final_T_stats"]
+                with open(os.path.join(render_path, f"{idx:05d}_finalT_stats.json"), "w", encoding="utf-8") as f:
+                    json.dump(summary_T, f, ensure_ascii=False, indent=2)
 
             # --- Adjusted analysis: treat profile_first_true_at as skip_count ---
             if "profile_first_true_at" in out and "profile_post_false_after" in out:
@@ -166,6 +201,10 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
                     "post_false_ratio_ge_50pct": int((post_false_ratio >= 0.5).sum()),
                     "post_false_ratio_ge_90pct": int((post_false_ratio >= 0.9).sum())
                 }
+                if finalT_np is not None:
+                    # 将 final_T 的均值和饱和信息并入该综合总结，方便下游关联分析
+                    summary["final_T_mean"] = float(finalT_np.mean())
+                    summary["final_T_saturated_ratio"] = float((finalT_np < 0.0001).mean())
                 with open(os.path.join(render_path, f"{idx:05d}_skip_post_summary.json"), "w", encoding="utf-8") as f:
                     json.dump(summary, f, ensure_ascii=False, indent=2)
 
