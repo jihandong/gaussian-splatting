@@ -323,6 +323,7 @@ if __name__ == "__main__":
     parser.add_argument("--enable_pixel_profile", action="store_true", help="Enable per-pixel Gaussian count profiling (bit 0)")
     parser.add_argument("--enable_timing_profile", action="store_true", help="Enable per-pixel timing profiling (bit 1)")
     parser.add_argument("--enable_color_discrimination", action="store_true", help="Enable Color Discrimination")
+    parser.add_argument("--use_mean_T_threshold", action="store_true", help="Use higher early-stop transmittance threshold (~0.02419f) via profile bit8")
     args = get_combined_args(parser)
     # If user requested the convenience flag, set bit 0 in the profile_mask
     if getattr(args, 'enable_pixel_profile', False):
@@ -340,6 +341,11 @@ if __name__ == "__main__":
             args.profile_mask = int(getattr(args, 'profile_mask', 0)) | 4
         except:
             args.profile_mask = 4
+    if getattr(args, 'use_mean_T_threshold', False):
+        try:
+            args.profile_mask = int(getattr(args, 'profile_mask', 0)) | 8
+        except:
+            args.profile_mask = 8
     print("Rendering " + args.model_path)
 
     # Initialize system state (RNG)
