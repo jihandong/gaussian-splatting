@@ -114,24 +114,10 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             cov3D_precomp = cov3D_precomp)
 
     # Unpack flexible return (3, 7, or 9 elements depending on profiling bits)
-    tests_tensor = None
-    contribs_tensor = None
-    loop_cycles_tensor = None
-    discrim_cycles_tensor = None
-    if isinstance(res, (tuple, list)):
-        if len(res) == 3:
-            rendered_image, radii, depth_image = res
-        elif len(res) == 7:
-            # counts only
-            rendered_image, radii, depth_image, tests_tensor, contribs_tensor, first_true_tensor, post_false_tensor = res
-        elif len(res) == 9:
-            # counts + timing
-            rendered_image, radii, depth_image, tests_tensor, contribs_tensor, first_true_tensor, post_false_tensor, loop_cycles_tensor, discrim_cycles_tensor = res
-        else:
-            rendered_image, radii, depth_image = res[0], res[1], res[2]
-    else:
-        # Single return? unexpected, but attempt to unpack
-        rendered_image, radii, depth_image = res
+    # 统一接口：绑定层已固定返回 9 元组
+    (rendered_image, radii, depth_image,
+     tests_tensor, contribs_tensor, first_true_tensor, post_false_tensor,
+     loop_cycles_tensor, discrim_cycles_tensor) = res
         
     # Apply exposure to rendered image (training only)
     if use_trained_exp:
@@ -144,6 +130,21 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if rendered_image.dim() == 2:
         rendered_image = rendered_image.unsqueeze(0)
     rendered_image = rendered_image.clamp(0, 1)
+    # 容错：若有调用方未按 9 元组返回，下面代码仍保证占位
+    dev = rendered_image.device
+    if tests_tensor is None or tests_tensor.numel() == 0:
+        tests_tensor = torch.empty(0, dtype=torch.int32, device=dev)
+    if contribs_tensor is None or contribs_tensor.numel() == 0:
+        contribs_tensor = torch.empty(0, dtype=torch.int32, device=dev)
+    if first_true_tensor is None or first_true_tensor.numel() == 0:
+        first_true_tensor = torch.empty(0, dtype=torch.int32, device=dev)
+    if post_false_tensor is None or post_false_tensor.numel() == 0:
+        post_false_tensor = torch.empty(0, dtype=torch.int32, device=dev)
+    if loop_cycles_tensor is None or loop_cycles_tensor.numel() == 0:
+        loop_cycles_tensor = torch.empty(0, dtype=torch.int64, device=dev)
+    if discrim_cycles_tensor is None or discrim_cycles_tensor.numel() == 0:
+        discrim_cycles_tensor = torch.empty(0, dtype=torch.int64, device=dev)
+
     out = {
         "render": rendered_image,
         "viewspace_points": screenspace_points,
@@ -151,16 +152,11 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         "radii": radii,
         "depth" : depth_image
         }
-    if tests_tensor is not None:
-        out["profile_tests"] = tests_tensor
-    if contribs_tensor is not None:
-        out["profile_contribs"] = contribs_tensor
-    if loop_cycles_tensor is not None:
-        out["profile_loop_cycles"] = loop_cycles_tensor
-    if discrim_cycles_tensor is not None:
-        out["profile_discrim_cycles"] = discrim_cycles_tensor
-    if first_true_tensor is not None:
-        out["profile_first_true_at"] = first_true_tensor
-    if post_false_tensor is not None:
-        out["profile_post_false_after"] = post_false_tensor
+    # Always expose profiling keys; render.py 再决定是否使用
+    out["profile_tests"] = tests_tensor
+    out["profile_contribs"] = contribs_tensor
+    out["profile_first_true_at"] = first_true_tensor
+    out["profile_post_false_after"] = post_false_tensor
+    out["profile_loop_cycles"] = loop_cycles_tensor
+    out["profile_discrim_cycles"] = discrim_cycles_tensor
     return out
