@@ -235,6 +235,34 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
                 save_cycles_heat(lc_np, os.path.join(render_path, f"{idx:05d}_loop_cycles.png"))
                 save_cycles_heat(dc_np, os.path.join(render_path, f"{idx:05d}_discrim_cycles.png"))
 
+                # Independent analysis for loop_cycles
+                if lc_np.size > 0:
+                    lc_flat = lc_np.flatten()
+                    lc_valid = lc_flat[lc_flat > 0]  # filter out zero cycles if any
+                    vmax_lc = max(float(np.percentile(lc_np, 99.5)), 1.0)
+                    edges_lc = np.linspace(0.0, vmax_lc, 21, dtype=np.float32)
+                    hist_lc, _ = np.histogram(lc_np, bins=edges_lc)
+                    pct_lc = np.percentile(lc_valid, [50, 90, 95, 99, 99.5]).tolist() if lc_valid.size > 0 else [0,0,0,0,0]
+                    lc_summary = {
+                        "num_pixels": int(lc_np.size),
+                        "valid_pixels": int(lc_valid.size),
+                        "min": int(lc_np.min()),
+                        "max": int(lc_np.max()),
+                        "mean": float(lc_np.mean()),
+                        "std": float(lc_np.std()),
+                        "percentiles": {
+                            "p50": float(pct_lc[0]),
+                            "p90": float(pct_lc[1]),
+                            "p95": float(pct_lc[2]),
+                            "p99": float(pct_lc[3]),
+                            "p99_5": float(pct_lc[4])
+                        },
+                        "hist_edges": edges_lc.tolist(),
+                        "hist_counts": hist_lc.astype(np.int64).tolist()
+                    }
+                    with open(os.path.join(render_path, f"{idx:05d}_loop_cycles_stats.json"), "w", encoding="utf-8") as f:
+                        json.dump(lc_summary, f, ensure_ascii=False, indent=2)
+
                 # Analysis 1: share of total loop time inside discrimination (dc / lc)
                 with np.errstate(divide='ignore', invalid='ignore'):
                     share = np.where(lc_np > 0, dc_np / lc_np, 0.0).astype(np.float32)
