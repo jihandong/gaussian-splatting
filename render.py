@@ -36,8 +36,21 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
     makedirs(render_path, exist_ok=True)
     makedirs(gts_path, exist_ok=True)
 
+    # Timing statistics for pure render performance
+    render_times = []
+    total_times = []
+
     for idx, view in enumerate(tqdm(views, desc="Rendering progress")):
+        iter_start = torch.cuda.Event(enable_timing=True)
+        iter_end = torch.cuda.Event(enable_timing=True)
+        render_start = torch.cuda.Event(enable_timing=True)
+        render_end = torch.cuda.Event(enable_timing=True)
+
+        iter_start.record()
+        render_start.record()
         out = render(view, gaussians, pipeline, background, use_trained_exp=train_test_exp, separate_sh=separate_sh)
+        render_end.record()
+
         rendering = out["render"]
         gt = view.original_image[0:3, :, :]
 
@@ -324,6 +337,40 @@ def render_set(model_path, name, iteration, views, gaussians, pipeline, backgrou
 
         torchvision.utils.save_image(rendering, os.path.join(render_path, '{0:05d}'.format(idx) + ".png"))
         torchvision.utils.save_image(gt, os.path.join(gts_path, '{0:05d}'.format(idx) + ".png"))
+
+        # Record timing
+        iter_end.record()
+        torch.cuda.synchronize()
+        render_times.append(render_start.elapsed_time(render_end))  # ms
+        total_times.append(iter_start.elapsed_time(iter_end))  # ms
+
+    # Save timing summary
+    if render_times:
+        timing_summary = {
+            "num_frames": len(render_times),
+            "render_time_ms": {
+                "mean": float(np.mean(render_times)),
+                "std": float(np.std(render_times)),
+                "min": float(np.min(render_times)),
+                "max": float(np.max(render_times)),
+                "total": float(np.sum(render_times)),
+                "fps": float(1000.0 / np.mean(render_times)) if np.mean(render_times) > 0 else 0.0
+            },
+            "total_time_ms": {
+                "mean": float(np.mean(total_times)),
+                "std": float(np.std(total_times)),
+                "min": float(np.min(total_times)),
+                "max": float(np.max(total_times)),
+                "total": float(np.sum(total_times)),
+                "fps": float(1000.0 / np.mean(total_times)) if np.mean(total_times) > 0 else 0.0
+            },
+            "io_overhead_ratio": float((np.mean(total_times) - np.mean(render_times)) / np.mean(total_times)) if np.mean(total_times) > 0 else 0.0
+        }
+        with open(os.path.join(render_path, "timing_benchmark.json"), "w", encoding="utf-8") as f:
+            json.dump(timing_summary, f, ensure_ascii=False, indent=2)
+        print(f"\n[Timing] Render: {timing_summary['render_time_ms']['mean']:.2f}ms/frame ({timing_summary['render_time_ms']['fps']:.1f} FPS)")
+        print(f"[Timing] Total:  {timing_summary['total_time_ms']['mean']:.2f}ms/frame ({timing_summary['total_time_ms']['fps']:.1f} FPS)")
+        print(f"[Timing] I/O overhead: {timing_summary['io_overhead_ratio']*100:.1f}%")
 
 def render_sets(dataset : ModelParams, iteration : int, pipeline : PipelineParams, skip_train : bool, skip_test : bool, separate_sh: bool):
     with torch.no_grad():
