@@ -26,6 +26,9 @@ def readImages(renders_dir, gt_dir):
     gts = []
     image_names = []
     for fname in os.listdir(renders_dir):
+        # Only process pure numeric png files (e.g., 00000.png), skip profiling outputs
+        if not fname.endswith('.png') or '_' in fname:
+            continue
         render = Image.open(renders_dir / fname)
         gt = Image.open(gt_dir / fname)
         renders.append(tf.to_tensor(render).unsqueeze(0)[:, :3, :, :].cuda())
