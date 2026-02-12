@@ -88,9 +88,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         colors_precomp = override_color
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen).
-    # The underlying rasterizer can optionally return two profiling
-    # tensors (tests_per_pixel, contribs_per_pixel) when debug is
-    # enabled. Handle both return shapes here.
     if separate_sh:
         res = rasterizer(
             means3D = means3D,
@@ -113,9 +110,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             rotations = rotations,
             cov3D_precomp = cov3D_precomp)
 
-    (rendered_image, final_T_tensor, radii, depth_image,
-     tests_tensor, contribs_tensor, first_true_tensor, post_false_tensor,
-     loop_cycles_tensor, discrim_cycles_tensor) = res
+    (rendered_image, final_T_tensor, radii, depth_image) = res
         
     # Apply exposure to rendered image (training only)
     if use_trained_exp:
@@ -128,20 +123,6 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     if rendered_image.dim() == 2:
         rendered_image = rendered_image.unsqueeze(0)
     rendered_image = rendered_image.clamp(0, 1)
-    # 容错：若有调用方未按 9 元组返回，下面代码仍保证占位
-    dev = rendered_image.device
-    if tests_tensor is None or tests_tensor.numel() == 0:
-        tests_tensor = torch.empty(0, dtype=torch.int32, device=dev)
-    if contribs_tensor is None or contribs_tensor.numel() == 0:
-        contribs_tensor = torch.empty(0, dtype=torch.int32, device=dev)
-    if first_true_tensor is None or first_true_tensor.numel() == 0:
-        first_true_tensor = torch.empty(0, dtype=torch.int32, device=dev)
-    if post_false_tensor is None or post_false_tensor.numel() == 0:
-        post_false_tensor = torch.empty(0, dtype=torch.int32, device=dev)
-    if loop_cycles_tensor is None or loop_cycles_tensor.numel() == 0:
-        loop_cycles_tensor = torch.empty(0, dtype=torch.int64, device=dev)
-    if discrim_cycles_tensor is None or discrim_cycles_tensor.numel() == 0:
-        discrim_cycles_tensor = torch.empty(0, dtype=torch.int64, device=dev)
 
     out = {
         "render": rendered_image,
@@ -151,13 +132,5 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         "radii": radii,
         "depth" : depth_image
         }
-    # Always expose profiling keys; render.py 再决定是否使用
-    out["profile_tests"] = tests_tensor
-    out["profile_contribs"] = contribs_tensor
-    out["profile_first_true_at"] = first_true_tensor
-    out["profile_post_false_after"] = post_false_tensor
-    out["profile_loop_cycles"] = loop_cycles_tensor
-    out["profile_discrim_cycles"] = discrim_cycles_tensor
 
-    # 不在此处计算 final_T 统计，统一由 render.py 负责（与其它 profiling 一致）
     return out
